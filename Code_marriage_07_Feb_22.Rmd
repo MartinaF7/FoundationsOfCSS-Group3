@@ -1,0 +1,406 @@
+---
+title: "Foundations of CSS group project - The impact of emotional language on engagement rates on Twitter - Same Sex Marriage"
+author: "Group 3"
+---
+
+**1. Install and load relevant packages**
+
+```{r}
+install.packages("rtweet")
+install.packages("vader")
+install.packages("dplyr")
+install.packages("syuzhet")
+install.packages("ggplot2")
+```
+
+```{r}
+library(rtweet)
+library(vader)
+library(dplyr)
+library(syuzhet)
+library(ggplot2)
+```
+
+**2. Generate and filter Twitter data**
+
+```{r}
+df_marriage = search_tweets(q = "same sex marriage", n = 15000, type = "mixed", include_rts = F, lang = "en")
+```
+
+```{r}
+marriage_filtered = df_marriage %>%
+                     filter(retweet_count > 0) %>%
+                       select(user_id, status_id, text, retweet_count) %>%
+                         arrange(retweet_count)
+```
+
+```{r}
+users_vector_marriage = marriage_filtered[['user_id']]
+temp_df_users_marriage <- lookup_users(users = users_vector_marriage)
+```
+
+```{r}
+followers_filtered_marriage = temp_df_users_marriage %>%
+                               select(user_id, followers_count) 
+                         
+marriage_final = inner_join(marriage_filtered, followers_filtered_marriage)
+```
+
+```{r}
+marriage_final$engagement_rate <- (marriage_final$retweet_count/marriage_final$followers_count)*100
+```
+
+
+**3. Run VADER and Syuzhet over each text**
+
+```{r}
+twitterVADER <- vader_df(marriage_final$text)
+```
+
+```{r}
+marriage_final$VADERcompound <- twitterVADER$compound
+```
+
+```{r}
+marriage_final$syuzhet_value <- get_sentiment(marriage_final$text)
+```
+
+```{r}
+marriage_final <- na.omit(marriage_final) 
+```
+
+
+**4. Data analysis**
+
+Average engagement rate:
+
+```{r}
+mean(marriage_final$engagement_rate, na.rm = TRUE)
+sd(marriage_final$engagement_rate, na.rm = TRUE)
+
+#calculating 95% confidence interval
+ci <- qnorm(0.975)*sd(marriage_final$engagement_rate, na.rm = TRUE)/sqrt(nrow(marriage_final))
+mean(marriage_final$engagement_rate, na.rm = TRUE)-ci
+mean(marriage_final$engagement_rate, na.rm = TRUE)+ci
+```
+
+Prevalence of different sentiments:
+
+```{r}
+hist(marriage_final$VADERcompound, main="VADER sentiment scores of tweets regarding same sex marriage", xlab="Sentiment of tweets (VADER score)", ylab ="Frequency")
+abline(v = mean(marriage_final$VADERcompound, na.rm = TRUE), col="red", lwd=3, lty=1)
+
+hist(marriage_final$syuzhet_value, main="Syuzhet sentiment scores of tweets regarding same sex marriage", xlab="Sentiment of tweets (Syuzhet score)", ylab ="Frequency")
+abline(v = mean(marriage_final$syuzhet_value, na.rm = TRUE), col="red", lwd=3, lty=1)
+```
+
+Relationship between VADER compound/ Syuzhet values and engagement rates: 
+
+```{r}
+filtered = marriage_final %>%
+             filter(engagement_rate < mean(marriage_final$engagement_rate, na.rm = TRUE)+ci)
+# Filtered because the outliers skew the result too much so cannot see what is going on. The upper limit of the 95% confidence interval was used as the max engagement rate to ensure most data points are captured. 
+```
+
+```{r}
+plot(filtered$syuzhet_value, filtered$engagement_rate, main="Engagement rate on Twitter vs Syuzhet sentiment scores \n of tweets regarding same sex marriage", xlab="Sentiment of tweets (Syuzhet score)", ylab="Engagement rate (%)")
+
+plot(filtered$VADERcompound, filtered$engagement_rate, main="Engagement rate on Twitter vs VADER sentiment scores \n of tweets regarding same sex marriage", xlab="Sentiment of tweets (VADER score)", ylab="Engagement rate (%)")
+```
+
+```{r}
+# LM model - Vader
+
+lm_model_V = lm(VADERcompound~engagement_rate, data=marriage_final)
+summary(lm_model_V)
+
+confint(lm_model_V)
+```
+
+```{r}
+# LM model - Syuzhet
+
+lm_model_S = lm(syuzhet_value~engagement_rate, data=marriage_final)
+summary(lm_model_S)
+
+confint(lm_model_S)
+```
+
+Checking the assumptions of the linear model:
+
+```{r}
+# We want the model to be unbiased in the sense that it cannot be easily improved by changing the value of the coefficients. You can verify this by checking that the mean value of residuals is very close to zero
+
+mean(residuals(lm_model_V))
+mean(residuals(lm_model_S))
+```
+
+```{r}
+# A common assumption is that residuals are normally distributed, which is a necessary condition for the additional information in the summary tables to be correct. 
+
+hist(residuals(lm_model_V))
+hist(residuals(lm_model_S))
+```
+
+```{r}
+# Other assumptions are that residuals are uncorrelated with predicted values. Should be close to zero.
+
+cor(residuals(lm_model_V), predict(lm_model_V))
+cor(residuals(lm_model_S), predict(lm_model_S))
+```
+
+```{r}
+# Assumption that the variance of residuals is constant across the predicted value range. 
+
+plot(predict(lm_model_V), residuals(lm_model_V))
+plot(predict(lm_model_S), residuals(lm_model_S))
+```
+
+Relationship between positive/ negative emotions and engagement rates - VADER:
+
+```{r}
+VADER_positive = marriage_final %>%
+                   filter(VADERcompound >= 0.5) %>%
+                     filter(engagement_rate != 'Inf')
+
+VADER_negative = marriage_final %>%
+                   filter(VADERcompound <= -0.5) %>%
+                     filter(engagement_rate != 'Inf')
+
+VADER_neutral = marriage_final %>%
+                  filter(VADERcompound < 0.5) %>%
+                    filter(VADERcompound > -0.5) %>%
+                      filter(engagement_rate != 'Inf')
+
+mean(VADER_positive$engagement_rate, na.rm = TRUE)
+mean(VADER_negative$engagement_rate, na.rm = TRUE)
+mean(VADER_neutral$engagement_rate, na.rm = TRUE)
+
+sd(VADER_positive$engagement_rate, na.rm = TRUE)
+sd(VADER_negative$engagement_rate, na.rm = TRUE)
+sd(VADER_neutral$engagement_rate, na.rm = TRUE)
+
+#calculating 95% confidence intervals
+ciVpos <- qnorm(0.975)*sd(VADER_positive$engagement_rate, na.rm = TRUE)/sqrt(nrow(VADER_positive))
+
+ciVneg <- qnorm(0.975)*sd(VADER_negative$engagement_rate, na.rm = TRUE)/sqrt(nrow(VADER_negative))
+
+ciVneu <- qnorm(0.975)*sd(VADER_neutral$engagement_rate, na.rm = TRUE)/sqrt(nrow(VADER_neutral))
+```
+
+```{r}
+VADERdf <- data.frame(VADER_Sentiment_Score_Category=c('Positive', 'Negative', 'Neutral'), Mean_Engagement_Rate=c(mean(VADER_positive$engagement_rate, na.rm = TRUE), mean(VADER_negative$engagement_rate, na.rm = TRUE), mean(VADER_neutral$engagement_rate, na.rm = TRUE)), Confidence_Interval=c(ciVpos, ciVneg, ciVneu))
+
+ggplot(VADERdf, aes(x=VADER_Sentiment_Score_Category, y=Mean_Engagement_Rate)) + geom_errorbar(aes(ymin=Mean_Engagement_Rate-Confidence_Interval, ymax=Mean_Engagement_Rate+Confidence_Interval), width=.2) +  geom_line() + geom_point() + ggtitle("Mean engagement rates for positive, neutral and negative sentiment Tweets regarding \nsame sex marriage classified on the basis of their VADER sentiment scores") + xlab("VADER Sentiment Score Category") + ylab("Mean Engagement Rate (%) and 95% CI")
+```
+
+```{r}
+# Check the distribution of engagement rate data for normality to determine which test to carry out.
+
+hist(VADER_positive$engagement_rate, main="Engagement rates of Tweets with positive VADER scores \n regarding same sex marriage", xlab="Engagement rate (%)", ylab ="Frequency")
+hist(VADER_negative$engagement_rate, main="Engagement rates of Tweets with negative VADER scores \n regarding same sex marriage", xlab="Engagement rate (%)", ylab ="Frequency")
+
+# If the value of p is equal to or less than 0.05, then the hypothesis of normality will be rejected by the Shapiro test. On failing, the test can state that the data will not fit the distribution normally with 95% confidence. 
+
+shapiro.test(VADER_positive$engagement_rate)
+shapiro.test(VADER_negative$engagement_rate)
+```
+
+```{r}
+# Do a Wilcoxon rank-sum test for non-normal data. 
+# Null hypothesis is that there is no difference between positive and negative means. If p-value is less than 0.05 then at the 5% significance level, we reject the null hypothesis and conclude that the means are significantly different. 
+
+Vwilcox <- wilcox.test(VADER_positive$engagement_rate, VADER_negative$engagement_rate)
+Vwilcox
+```
+
+```{r}
+VADER_positive_filtered = VADER_positive %>%
+                            filter(engagement_rate < mean(marriage_final$engagement_rate, na.rm = TRUE)+ci)
+
+VADER_negative_filtered = VADER_negative %>%
+                            filter(engagement_rate < mean(marriage_final$engagement_rate, na.rm = TRUE)+ci)
+```
+
+```{r}
+plot(VADER_positive_filtered$VADERcompound, VADER_positive_filtered$engagement_rate, main="Engagement rate on Twitter vs positive emotion VADER sentiment \n scores of tweets regarding same sex marriage", xlab="Sentiment of tweets (VADER score)", ylab="Engagement rate (%)")
+
+plot(VADER_negative_filtered$VADERcompound, VADER_negative_filtered$engagement_rate, main="Engagement rate on Twitter vs negative emotion VADER sentiment \n scores of tweets regarding same sex marriage", xlab="Sentiment of tweets (VADER score)", ylab="Engagement rate (%)")
+```
+
+```{r}
+lm_model_pos_V = lm(VADERcompound~engagement_rate, data=VADER_positive)
+summary(lm_model_pos_V)
+confint(lm_model_pos_V)
+
+lm_model_neg_V = lm(VADERcompound~engagement_rate, data=VADER_negative)
+summary(lm_model_neg_V)
+confint(lm_model_neg_V)
+```
+
+Checking the assumptions of the linear model:
+
+```{r}
+# We want the model to be unbiased in the sense that it cannot be easily improved by changing the value of the coefficients. You can verify this by checking that the mean value of residuals is very close to zero
+
+mean(residuals(lm_model_pos_V))
+mean(residuals(lm_model_neg_V))
+```
+
+```{r}
+# A common assumption is that residuals are normally distributed, which is a necessary condition for the additional information in the summary tables to be correct. 
+
+hist(residuals(lm_model_pos_V))
+hist(residuals(lm_model_neg_V))
+
+```
+
+```{r}
+# Other assumptions are that residuals are uncorrelated with predicted values.
+
+cor(residuals(lm_model_pos_V), predict(lm_model_pos_V))
+cor(residuals(lm_model_neg_V), predict(lm_model_neg_V))
+```
+
+```{r}
+# Assumption that the variance of residuals is constant across the predicted value range. 
+
+plot(predict(lm_model_pos_V), residuals(lm_model_pos_V))
+plot(predict(lm_model_neg_V), residuals(lm_model_neg_V))
+```
+
+Relationship between positive/ negative emotions and engagement rates - Syuzhet:
+
+```{r}
+syuzhet_positive = marriage_final %>%
+                     filter(syuzhet_value >= 2.5) %>%
+                       filter(engagement_rate != 'Inf')
+
+syuzhet_negative = marriage_final %>%
+                     filter(syuzhet_value <= -2.5) %>%
+                       filter(engagement_rate != 'Inf')
+
+syuzhet_neutral = marriage_final %>%
+                    filter(syuzhet_value < 2.5) %>%
+                      filter(syuzhet_value > -2.5) %>%
+                        filter(engagement_rate != 'Inf')
+
+mean(syuzhet_positive$engagement_rate, na.rm = TRUE)
+mean(syuzhet_negative$engagement_rate, na.rm = TRUE)
+mean(syuzhet_neutral$engagement_rate, na.rm = TRUE)
+
+sd(syuzhet_positive$engagement_rate, na.rm = TRUE)
+sd(syuzhet_negative$engagement_rate, na.rm = TRUE)
+sd(syuzhet_neutral$engagement_rate, na.rm = TRUE)
+
+#calculating 95% confidence intervals
+ciSpos <- qnorm(0.975)*sd(syuzhet_positive$engagement_rate, na.rm = TRUE)/sqrt(nrow(syuzhet_positive))
+
+ciSneg <- qnorm(0.975)*sd(syuzhet_negative$engagement_rate, na.rm = TRUE)/sqrt(nrow(syuzhet_negative))
+
+ciSneu <- qnorm(0.975)*sd(syuzhet_neutral$engagement_rate, na.rm = TRUE)/sqrt(nrow(syuzhet_neutral))
+```
+
+```{r}
+syuzhetdf <- data.frame(Syuzhet_Sentiment_Score_Category=c('Positive', 'Negative', 'Neutral'), Mean_Engagement_Rate=c(mean(syuzhet_positive$engagement_rate, na.rm = TRUE), mean(syuzhet_negative$engagement_rate, na.rm = TRUE), mean(syuzhet_neutral$engagement_rate, na.rm = TRUE)), Confidence_Interval=c(ciSpos, ciSneg, ciSneu))
+
+ggplot(syuzhetdf, aes(x=Syuzhet_Sentiment_Score_Category, y=Mean_Engagement_Rate)) + geom_errorbar(aes(ymin=Mean_Engagement_Rate-Confidence_Interval, ymax=Mean_Engagement_Rate+Confidence_Interval), width=.2) +  geom_line() + geom_point() + ggtitle("Mean engagement rates for positive, neutral and negative sentiment Tweets regarding \nsame sex marriage classified on the basis of their Syuzhet sentiment scores") + xlab("Syuzhet Sentiment Score Category") + ylab("Mean Engagement Rate (%) and 95% CI")
+```
+
+```{r}
+# Check the distribution of engagement rate data for normality to determine which test to carry out.
+
+hist(syuzhet_positive$engagement_rate, main="Engagement rates of Tweets with positive Syuzhet scores \n regarding same sex marriage", xlab="Engagement rate (%)", ylab ="Frequency")
+hist(syuzhet_negative$engagement_rate, main="Engagement rates of Tweets with negative Syuzhet scores \n regarding same sex marriage", xlab="Engagement rate (%)", ylab ="Frequency")
+
+# If the value of p is equal to or less than 0.05, then the hypothesis of normality will be rejected by the Shapiro test. On failing, the test can state that the data will not fit the distribution normally with 95% confidence. 
+
+shapiro.test(syuzhet_positive$engagement_rate)
+shapiro.test(syuzhet_negative$engagement_rate)
+```
+
+```{r}
+# Do a Wilcoxon rank-sum test for non-normal data. 
+# Null hypothesis is that there is no difference between positive and negative means. If p-value is less than 0.05 then at the 5% significance level, we reject the null hypothesis and conclude that the means are significantly different. 
+
+Vwilcox <- wilcox.test(syuzhet_positive$engagement_rate, syuzhet_negative$engagement_rate)
+Vwilcox
+```
+
+```{r}
+syuzhet_positive_filtered = syuzhet_positive %>%
+                              filter(engagement_rate < mean(marriage_final$engagement_rate, na.rm = TRUE)+ci)
+
+syuzhet_negative_filtered = syuzhet_negative %>%
+                              filter(engagement_rate < mean(marriage_final$engagement_rate, na.rm = TRUE)+ci)
+```
+
+```{r}
+plot(syuzhet_positive_filtered$syuzhet_value, syuzhet_positive_filtered$engagement_rate, main="Engagement rate on Twitter vs positive emotion Syuzhet sentiment \n scores of tweets regarding same sex marriage", xlab="Sentiment of tweets (Syuzhet score)", ylab="Engagement rate (%)")
+
+plot(syuzhet_negative_filtered$syuzhet_value, syuzhet_negative_filtered$engagement_rate, main="Engagement rate on Twitter vs negative emotion Syuzhet sentiment \n scores of tweets regarding same sex marriage", xlab="Sentiment of tweets (Syuzhet score)", ylab="Engagement rate (%)")
+```
+
+```{r}
+lm_model_pos_S = lm(syuzhet_value~engagement_rate, data=syuzhet_positive)
+summary(lm_model_pos_S)
+confint(lm_model_pos_S)
+
+lm_model_neg_S = lm(syuzhet_value~engagement_rate, data=syuzhet_negative)
+summary(lm_model_neg_S)
+confint(lm_model_neg_S)
+```
+
+Checking the assumptions of the linear model:
+
+```{r}
+# We want the model to be unbiased in the sense that it cannot be easily improved by changing the value of the coefficients. You can verify this by checking that the mean value of residuals is very close to zero
+
+mean(residuals(lm_model_pos_S))
+mean(residuals(lm_model_neg_S))
+```
+
+```{r}
+# A common assumption is that residuals are normally distributed, which is a necessary condition for the additional information in the summary tables to be correct. 
+
+hist(residuals(lm_model_pos_S))
+hist(residuals(lm_model_neg_S))
+
+```
+
+```{r}
+# Other assumptions are that residuals are uncorrelated with predicted values.
+
+cor(residuals(lm_model_pos_S), predict(lm_model_pos_S))
+cor(residuals(lm_model_neg_S), predict(lm_model_neg_S))
+```
+
+```{r}
+# Assumption that the variance of residuals is constant across the predicted value range. 
+
+plot(predict(lm_model_pos_S), residuals(lm_model_pos_S))
+plot(predict(lm_model_neg_S), residuals(lm_model_neg_S))
+```
+
+**5. Exploratory analysis**
+
+Open a dataframe marriage_final and arrange the rows by engagement_rate so that the highest engagement rates are at the top. For each of the top 5 tweets with highest engagement rates, at least the following analysis should be carried out:
+
+1. Note down the sentiment scores - is it positive or negative, and how high or low is the score? 
+
+2. Look up more info about the user who posted it and the tweet itself. Consider details such as - was it posted by a popular account (e.g. someone famous or a news channel), when was is posted (if the timestamp is close to data retrieval time), what is the tweet about (look for clues of its popularity in the content of the tweet), etc. 
+
+```{r}
+# For each of the 5 tweets with highest engagement rates, look up the user and the tweet separately. From the marriage_final dataframe, copy-paste the user ID and status ID for each of the 5 top tweets into the code below. Run this code 5 times for the 5 tweets. 
+
+user_data <- lookup_users("5988062")
+glimpse(user_data)
+
+tweet_data <- lookup_tweets("1479798805881102340")
+glimpse(tweet_data)
+
+```
+
+Also take a look at dataframe marriage_final as a whole and note down any interesting observations e.g. if there are some tweets with high engagement rates but low number of followers and vice versa. Consider the same factors as above - for example, could it be that the time when the tweet was posted and the time we retrieved the data is close in proximity so that is why it did not receive more retweets?   
+
+
